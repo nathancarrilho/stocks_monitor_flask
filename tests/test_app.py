@@ -2,9 +2,24 @@
 Testes para Stock Dashboard
 Cada função testa UMA coisa específica
 """
+import sys
+import os
 import pytest
 import json
-from app import app
+
+# Adiciona o diretório raiz ao path para encontrar app.py
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from app import app
+except ImportError as e:
+    print(f"❌ Erro ao importar app: {e}")
+    print(f"📁 Diretório atual: {os.getcwd()}")
+    print(f"📁 Arquivos Python encontrados:")
+    for file in os.listdir('.'):
+        if file.endswith('.py'):
+            print(f"   - {file}")
+    raise
 
 # Configuração: cria um "cliente fake" para testar a app
 @pytest.fixture
@@ -113,3 +128,11 @@ def test_chart_endpoint_structure(client):
             chart_fields = ['date', 'open', 'high', 'low', 'close', 'volume']
             for field in chart_fields:
                 assert field in first_item, f"Campo '{field}' faltando nos dados do gráfico!"
+
+# TESTE BÁSICO: Verifica se conseguimos importar a aplicação
+def test_app_import():
+    """
+    Teste básico: verifica se conseguimos importar a aplicação
+    """
+    assert app is not None
+    assert hasattr(app, 'test_client')
