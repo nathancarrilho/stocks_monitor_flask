@@ -5,9 +5,12 @@ requests==2.32.4
 python-dotenv==1.0.0   
 gunicorn==23.0.0       
 
+# Dependências de sistema (correções de segurança)
+setuptools>=78.1.1     
+urllib3>=1.26.19       
+wheel>=0.38.1         
+zipp>=3.19.1           
 # Dependências para testes e CI/CD
 pytest==7.4.2
 flake8==6.0.0
 safety==2.3.4
-
-# Setuptools será atualizado automaticamente pelo pip
