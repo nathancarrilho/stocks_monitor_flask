@@ -169,6 +169,15 @@ def pagina_inicial():
     """
     return render_template('dashboard.html')
 
+@app.route('/api/test')
+def teste_api():
+    """Endpoint para testar se a API está funcionando"""
+    return jsonify({
+        'success': True,
+        'message': 'API funcionando!',
+        'timestamp': datetime.now().isoformat()
+    })
+
 @app.route('/api/quote/<simbolo>')
 def obter_cotacao(simbolo):
     """
