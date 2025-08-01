@@ -1,0 +1,10 @@
+# Dependências principais da aplicação
+Flask==2.3.3
+requests==2.31.0
+python-dotenv==1.0.0
+gunicorn==21.2.0
+
+# Dependências para testes e CI/CD
+pytest==7.4.2
+flake8==6.0.0
+safety==2.3.4

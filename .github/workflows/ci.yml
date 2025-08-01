@@ -1,0 +1,180 @@
+# Pipeline CI/CD para Stock Dashboard
+name: CI/CD Pipeline
+
+# QUANDO este pipeline vai executar
+on:
+  push:
+    branches: [ main, develop ]  # Quando você fizer push para main ou develop
+  pull_request:
+    branches: [ main ]           # Quando abrir PR para main
+
+# VARIÁVEIS que vamos usar em todo pipeline
+env:
+  IMAGE_NAME: stock-dashboard
+  PYTHON_VERSION: 3.11
+
+# JOBS (trabalhos) que vão executar EM SEQUÊNCIA
+jobs:
+  
+  # JOB 1: Testes Python (mais rápido, falha cedo)
+  python-tests:
+    name: 🐍 Python Tests & Security
+    runs-on: ubuntu-latest  # GitHub cria máquina Ubuntu limpa
+    
+    steps:
+    # STEP 1: Baixar código do GitHub
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+    
+    # STEP 2: Instalar Python 3.11
+    - name: 🐍 Set up Python ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    # STEP 3: Instalar dependências
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        # Ferramentas extras para CI
+        pip install pytest flake8 safety
+    
+    # STEP 4: SAFETY - Verificar bibliotecas vulneráveis
+    - name: 🛡️ Check for vulnerable packages
+      run: |
+        echo "🔍 Verificando vulnerabilidades em bibliotecas Python..."
+        safety check --json || safety check
+        # Se encontrar vulnerabilidade crítica, falha aqui
+    
+    # STEP 5: FLAKE8 - Verificar qualidade do código
+    - name: 🎨 Lint code with flake8
+      run: |
+        echo "🎨 Verificando qualidade do código..."
+        # Para por erros de sintaxe ou imports undefined
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Avisos sobre estilo (não falha, só avisa)
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    # STEP 6: PYTEST - Rodar testes funcionais
+    - name: 🧪 Run tests with pytest
+      run: |
+        echo "🧪 Executando testes..."
+        pytest tests/ -v --tb=short
+        # -v = verbose (mostra detalhes)
+        # --tb=short = traceback curto se falhar
+
+  # JOB 2: Build Docker (só roda se Job 1 passou)
+  docker-build:
+    name: 🐳 Docker Build & Test
+    runs-on: ubuntu-latest
+    needs: python-tests  # DEPENDÊNCIA: só roda se python-tests passou
+    
+    steps:
+    # STEP 1: Baixar código (job novo = máquina limpa)
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+    
+    # STEP 2: Configurar Docker Buildx (versão avançada do docker build)
+    - name: 🔧 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    # STEP 3: Build da imagem Docker
+    - name: 🐳 Build Docker image
+      run: |
+        echo "🏗️ Construindo imagem Docker..."
+        docker build -t ${{ env.IMAGE_NAME }}:latest .
+        docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+        # Cria 2 tags: :latest e :commit-hash
+        echo "✅ Imagem construída com sucesso!"
+    
+    # STEP 4: Testar se container funciona
+    - name: 🧪 Test container functionality
+      run: |
+        echo "🧪 Testando se container funciona..."
+        
+        # Roda container em background
+        docker run -d --name test-container -p 5000:5000 ${{ env.IMAGE_NAME }}:latest
+        
+        # Aguarda aplicação subir (importante!)
+        echo "⏳ Aguardando aplicação inicializar..."
+        sleep 15
+        
+        # Testa se API responde
+        echo "🔍 Testando API..."
+        curl -f http://localhost:5000/api/test || {
+          echo "❌ API não está respondendo!"
+          docker logs test-container
+          exit 1
+        }
+        
+        echo "✅ Container funcionando corretamente!"
+        
+        # Limpa container
+        docker stop test-container
+        docker rm test-container
+
+  # JOB 3: Security Scan (só roda se Job 2 passou)
+  security-scan:
+    name: 🛡️ Security Scan
+    runs-on: ubuntu-latest
+    needs: docker-build  # DEPENDÊNCIA: só roda se docker-build passou
+    
+    steps:
+    # STEP 1: Baixar código
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+    
+    # STEP 2: Build imagem novamente (job novo = máquina limpa)
+    - name: 🐳 Rebuild image for scanning
+      run: |
+        docker build -t ${{ env.IMAGE_NAME }}:scan .
+    
+    # STEP 3: TRIVY - Scan completo da imagem
+    - name: 🔍 Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: '${{ env.IMAGE_NAME }}:scan'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        severity: 'CRITICAL,HIGH'  # Só falha em vulnerabilidades críticas/altas
+    
+    # STEP 4: Upload resultados (para ver no GitHub)
+    - name: 📊 Upload Trivy scan results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()  # Executa mesmo se step anterior falhar
+      with:
+        sarif_file: 'trivy-results.sarif'
+    
+    # STEP 5: Scan simples com output no terminal
+    - name: 🛡️ Run Trivy scan (terminal output)
+      run: |
+        echo "🔍 Executando scan de segurança..."
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+          aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL \
+          ${{ env.IMAGE_NAME }}:scan
+        # exit-code 1 = falha pipeline se encontrar vulnerabilidade HIGH/CRITICAL
+
+  # JOB 4: Relatório final
+  report:
+    name: 📋 Pipeline Report
+    runs-on: ubuntu-latest
+    needs: [python-tests, docker-build, security-scan]
+    if: always()  # Executa SEMPRE (mesmo se outros jobs falharam)
+    
+    steps:
+    - name: 📊 Generate Pipeline Summary
+      run: |
+        echo "## 🚀 Pipeline Execution Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Stage | Status | Duration |" >> $GITHUB_STEP_SUMMARY
+        echo "|-------|--------|----------|" >> $GITHUB_STEP_SUMMARY
+        echo "| 🐍 Python Tests | ${{ needs.python-tests.result }} | - |" >> $GITHUB_STEP_SUMMARY
+        echo "| 🐳 Docker Build | ${{ needs.docker-build.result }} | - |" >> $GITHUB_STEP_SUMMARY
+        echo "| 🛡️ Security Scan | ${{ needs.security-scan.result }} | - |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**📋 Details:**" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Author:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
