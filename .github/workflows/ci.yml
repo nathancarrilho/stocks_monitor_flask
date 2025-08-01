@@ -168,7 +168,7 @@ jobs:
     
     # STEP 4: Upload resultados (para ver no GitHub)
     - name: 📊 Upload Trivy scan results to GitHub Security
-      uses: github/codeql-action/upload-sarif@v2
+      uses: github/codeql-action/upload-sarif@v3
       if: always()  # Executa mesmo se step anterior falhar
       with:
         sarif_file: 'trivy-results.sarif'
