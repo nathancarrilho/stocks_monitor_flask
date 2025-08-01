@@ -3,7 +3,7 @@
 # ============================================
 from flask import Flask, render_template, jsonify, request
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ============================================
 # PARTE 2: CRIAR A APLICAÇÃO FLASK
@@ -62,7 +62,6 @@ def buscar_dados_historicos(simbolo, dias=30):
     """
     try:
         # Calcula as datas
-        from datetime import datetime, timedelta
         data_fim = datetime.now()
         data_inicio = data_fim - timedelta(days=dias)
         
@@ -117,45 +116,6 @@ def buscar_dados_historicos(simbolo, dias=30):
     except Exception as erro:
         print(f"Erro ao buscar dados históricos de {simbolo}: {erro}")
         return []
-    """
-    Esta função vai na internet buscar o preço de uma ação
-    Exemplo: buscar_cotacao("AAPL") vai buscar o preço da Apple
-    """
-    try:
-        # URL da API do Yahoo Finance (gratuita)
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{simbolo}"
-        
-        # Cabeçalhos para parecer um navegador normal
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
-        # Faz a requisição para a API
-        resposta = requests.get(url, headers=headers, timeout=10)
-        dados = resposta.json()
-        
-        # Extrai as informações importantes
-        if 'chart' in dados and dados['chart']['result']:
-            info = dados['chart']['result'][0]['meta']
-            
-            preco_atual = info.get('regularMarketPrice', 0)
-            preco_anterior = info.get('previousClose', preco_atual)
-            mudanca = preco_atual - preco_anterior
-            mudanca_percentual = (mudanca / preco_anterior * 100) if preco_anterior > 0 else 0
-            
-            # Retorna um dicionário com os dados organizados
-            # IMPORTANTE: usar os mesmos nomes que o HTML espera
-            return {
-                'symbol': simbolo.upper(),  # HTML espera 'symbol'
-                'price': round(preco_atual, 2),  # HTML espera 'price'
-                'change': round(mudanca, 2),  # HTML espera 'change'
-                'change_percent': f"{mudanca_percentual:.2f}%",  # HTML espera 'change_percent'
-                'volume': info.get('regularMarketVolume', 0),  # HTML espera 'volume'
-                'last_updated': datetime.now().strftime('%Y-%m-%d')  # HTML espera 'last_updated'
-            }
-    except Exception as erro:
-        print(f"Erro ao buscar {simbolo}: {erro}")
-        return None
 
 # ============================================
 # PARTE 4: ROTAS (páginas da aplicação)
@@ -170,8 +130,11 @@ def pagina_inicial():
     return render_template('dashboard.html')
 
 @app.route('/api/test')
-def teste_api():
-    """Endpoint para testar se a API está funcionando"""
+def api_test():
+    """
+    Endpoint para testar se a API está funcionando
+    Usado pelos testes automatizados
+    """
     return jsonify({
         'success': True,
         'message': 'API funcionando!',
@@ -185,20 +148,27 @@ def obter_cotacao(simbolo):
     Exemplo: GET /api/quote/AAPL
     Retorna dados em formato JSON
     """
+    # Limpa e valida o símbolo
+    simbolo = simbolo.strip().upper()
+    
+    if not simbolo:
+        return jsonify({
+            'success': False,
+            'error': 'Símbolo da ação é obrigatório'
+        }), 400
+    
     # Busca os dados usando nossa função
     cotacao = buscar_cotacao(simbolo)
     
-    if cotacao:
-        # Se encontrou dados, retorna sucesso
+    if cotacao and cotacao['price'] > 0:  # Verifica se o preço é válido
         return jsonify({
-            'success': True,  # Mudei de 'sucesso' para 'success' para bater com o HTML
-            'data': cotacao   # Mudei de 'dados' para 'data' para bater com o HTML
+            'success': True,
+            'data': cotacao
         })
     else:
-        # Se não encontrou, retorna erro
         return jsonify({
             'success': False,
-            'error': f'Não consegui encontrar dados para {simbolo}'
+            'error': f'Não foi possível obter a cotação para {simbolo}. Verifique se o símbolo está correto.'
         }), 404
 
 @app.route('/api/chart/<simbolo>')
@@ -207,8 +177,14 @@ def obter_dados_grafico(simbolo):
     API para buscar dados históricos para gráficos
     Exemplo: GET /api/chart/AAPL?days=30
     """
-    # Pega quantos dias o usuário quer (padrão 30)
+    simbolo = simbolo.strip().upper()
     dias = request.args.get('days', 30, type=int)
+    
+    if not simbolo:
+        return jsonify({
+            'success': False,
+            'error': 'Símbolo da ação é obrigatório'
+        }), 400
     
     # Busca os dados históricos
     dados_historicos = buscar_dados_historicos(simbolo, dias)
@@ -221,7 +197,7 @@ def obter_dados_grafico(simbolo):
     else:
         return jsonify({
             'success': False,
-            'error': f'Não consegui obter dados históricos para {simbolo}'
+            'error': f'Não foi possível obter dados históricos para {simbolo}'
         }), 404
 
 @app.route('/api/multiple')
@@ -231,41 +207,40 @@ def obter_multiplas_cotacoes():
     Exemplo: GET /api/multiple?symbols=AAPL,GOOGL,MSFT
     """
     # Pega os símbolos da URL (ex: ?symbols=AAPL,GOOGL)
-    from flask import request  # Precisamos importar request
-    simbolos_texto = request.args.get('symbols', '')  # Mudei de 'simbolos' para 'symbols'
+    simbolos_texto = request.args.get('symbols', '')
     simbolos_lista = [s.strip().upper() for s in simbolos_texto.split(',') if s.strip()]
+    
+    if not simbolos_lista:
+        return jsonify({
+            'success': False,
+            'error': 'Nenhum símbolo fornecido'
+        }), 400
     
     resultados = {}
     
     # Para cada símbolo, busca a cotação
     for simbolo in simbolos_lista[:5]:  # Máximo 5 para não sobrecarregar
         cotacao = buscar_cotacao(simbolo)
-        if cotacao:
+        if cotacao and cotacao['price'] > 0:  # Só adiciona se o preço for válido
             resultados[simbolo] = cotacao
     
     return jsonify({
-        'success': True,  # Mudei para 'success'
-        'data': resultados  # Mudei para 'data'
-    })
-
-@app.route('/api/teste')
-def teste_api():
-    """
-    Rota simples para testar se a API está funcionando
-    """
-    return jsonify({
-        'sucesso': True,
-        'mensagem': 'API funcionando!',
-        'horario': datetime.now().isoformat()
+        'success': True,
+        'data': resultados
     })
 
 # ============================================
 # PARTE 5: EXECUTAR A APLICAÇÃO
 # ============================================
 if __name__ == '__main__':
+    # Cria diretório de templates se não existir
+    import os
+    os.makedirs('templates', exist_ok=True)
+    os.makedirs('static', exist_ok=True)
+    
     print("🚀 Iniciando o servidor...")
     print("📊 Dashboard disponível em: http://localhost:5000")
-    print("🔧 API de teste em: http://localhost:5000/api/teste")
+    print("🔧 API de teste em: http://localhost:5000/api/test")
     
     # Roda o servidor Flask
     app.run(
